@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import * as snarkjs from "../main.js";
 import { g1CompressedHex, g2CompressedHex } from "../src/aiken_utils.js";
 import { getCurveFromName } from "../src/curves.js";
+import exportAikenVerifier from "../src/zkey_export_aikenverifier.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bls12381Dir = path.join(__dirname, "groth16_bls12381");
@@ -91,5 +92,83 @@ describe("Aiken point compression utilities", () => {
         const recompressed = new Uint8Array(curve.G2.F.n8);
         curve.G2.toRprCompressed(recompressed, 0, uncompressed);
         assert.strictEqual(Buffer.from(recompressed).toString("hex"), hex);
+    });
+});
+
+describe("Aiken verifier export", () => {
+    const zkeyPath = path.join(bls12381Dir, "circuit.zkey");
+    let templates;
+
+    before(() => {
+        const templatePath = path.join(__dirname, "..", "templates", "verifier_groth16.ak.ejs");
+        templates = {
+            groth16: readFileSync(templatePath, "utf8"),
+        };
+    });
+
+    it("should export a valid Aiken verifier from BLS12-381 zkey", async () => {
+        const code = await exportAikenVerifier(zkeyPath, templates);
+
+        assert.ok(code.includes("pub fn verify("), "Should contain verify function");
+        assert.ok(code.includes("bls12_381_miller_loop"), "Should contain pairing operations");
+        assert.ok(code.includes("bls12_381_g1_uncompress"), "Should contain G1 uncompress");
+        assert.ok(code.includes("bls12_381_g2_uncompress"), "Should contain G2 uncompress");
+        assert.ok(code.includes("bls12_381_final_verify"), "Should contain final verify");
+    });
+
+    it("should embed correct number of IC points", async () => {
+        const code = await exportAikenVerifier(zkeyPath, templates);
+
+        // vk has nPublic=2 so IC should have 3 points (IC[0], IC[1], IC[2])
+        assert.ok(code.includes("const ic_0"), "Should have ic_0");
+        assert.ok(code.includes("const ic_1"), "Should have ic_1");
+        assert.ok(code.includes("const ic_2"), "Should have ic_2");
+    });
+
+    it("should embed VK points as hex byte arrays", async () => {
+        const code = await exportAikenVerifier(zkeyPath, templates);
+
+        // Check that hex constants are present (96 chars for G1, 192 for G2)
+        const g1Pattern = /#"[0-9a-f]{96}"/;
+        const g2Pattern = /#"[0-9a-f]{192}"/;
+        assert.ok(g1Pattern.test(code), "Should contain G1 hex byte arrays");
+        assert.ok(g2Pattern.test(code), "Should contain G2 hex byte arrays");
+    });
+
+    it("should embed test proof when provided", async () => {
+        const curve = await getCurveFromName("bls12381");
+        try {
+            const testProof = {
+                pi_a: g1CompressedHex(curve, proof.pi_a),
+                pi_b: g2CompressedHex(curve, proof.pi_b),
+                pi_c: g1CompressedHex(curve, proof.pi_c),
+            };
+            const code = await exportAikenVerifier(zkeyPath, templates, null, {
+                testProof,
+                testPublicSignals: publicSignals,
+            });
+
+            assert.ok(code.includes("test verify_valid_proof()"), "Should contain valid proof test");
+            assert.ok(code.includes("test verify_invalid_proof() fail"), "Should contain invalid proof test");
+        } finally {
+            await curve.terminate();
+        }
+    });
+
+    it("should reject non-BLS12-381 Groth16 zkeys", async () => {
+        // circuit2/circuit.zkey is a PLONK key on BN128 — should be rejected
+        const nonBls12381ZkeyPath = path.join(__dirname, "circuit2", "circuit.zkey");
+        try {
+            readFileSync(nonBls12381ZkeyPath);
+        } catch {
+            // Skip test if zkey not available
+            return;
+        }
+
+        await assert.rejects(
+            () => exportAikenVerifier(nonBls12381ZkeyPath, templates),
+            /only supports/,
+            "Should reject non-BLS12-381/non-Groth16 zkeys"
+        );
     });
 });
