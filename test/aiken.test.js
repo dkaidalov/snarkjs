@@ -6,6 +6,7 @@ import * as snarkjs from "../main.js";
 import { g1CompressedHex, g2CompressedHex } from "../src/aiken_utils.js";
 import { getCurveFromName } from "../src/curves.js";
 import exportAikenVerifier from "../src/zkey_export_aikenverifier.js";
+import groth16ExportAikenCallData from "../src/groth16_exportaikencalldata.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bls12381Dir = path.join(__dirname, "groth16_bls12381");
@@ -170,5 +171,40 @@ describe("Aiken verifier export", () => {
             /only supports/,
             "Should reject non-BLS12-381/non-Groth16 zkeys"
         );
+    });
+});
+
+describe("Aiken calldata export", () => {
+    it("should export valid JSON", async () => {
+        const result = await groth16ExportAikenCallData(proof, publicSignals);
+        const parsed = JSON.parse(result);
+        assert.ok(parsed.pi_a, "Should have pi_a");
+        assert.ok(parsed.pi_b, "Should have pi_b");
+        assert.ok(parsed.pi_c, "Should have pi_c");
+        assert.ok(Array.isArray(parsed.public_signals), "Should have public_signals array");
+    });
+
+    it("should produce correct hex lengths", async () => {
+        const result = await groth16ExportAikenCallData(proof, publicSignals);
+        const parsed = JSON.parse(result);
+        assert.strictEqual(parsed.pi_a.length, 96, "G1 pi_a should be 96 hex chars");
+        assert.strictEqual(parsed.pi_b.length, 192, "G2 pi_b should be 192 hex chars");
+        assert.strictEqual(parsed.pi_c.length, 96, "G1 pi_c should be 96 hex chars");
+        assert.match(parsed.pi_a, /^[0-9a-f]+$/, "pi_a should be valid hex");
+        assert.match(parsed.pi_b, /^[0-9a-f]+$/, "pi_b should be valid hex");
+        assert.match(parsed.pi_c, /^[0-9a-f]+$/, "pi_c should be valid hex");
+    });
+
+    it("should preserve public signals", async () => {
+        const result = await groth16ExportAikenCallData(proof, publicSignals);
+        const parsed = JSON.parse(result);
+        assert.strictEqual(parsed.public_signals.length, publicSignals.length, "Should have same number of signals");
+        for (let i = 0; i < publicSignals.length; i++) {
+            assert.strictEqual(parsed.public_signals[i], publicSignals[i].toString(), `Signal ${i} should match`);
+        }
+    });
+
+    it("should be accessible via snarkjs.groth16.exportAikenCallData", async () => {
+        assert.strictEqual(typeof snarkjs.groth16.exportAikenCallData, "function", "Should be exported from facade");
     });
 });
