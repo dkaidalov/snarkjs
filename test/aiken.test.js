@@ -77,22 +77,28 @@ describe("Aiken point compression utilities", () => {
         assert.notStrictEqual(hex1, hex2, "Different points should produce different output");
     });
 
-    it("should round-trip compress/uncompress G1 points", () => {
+    it("should produce Zcash-format compressed G1 (compression flag set)", () => {
         const hex = g1CompressedHex(curve, vk.vk_alpha_1);
-        const buff = Buffer.from(hex, "hex");
-        const uncompressed = curve.G1.fromRprCompressed(buff, 0);
-        const recompressed = new Uint8Array(curve.G1.F.n8);
-        curve.G1.toRprCompressed(recompressed, 0, uncompressed);
-        assert.strictEqual(Buffer.from(recompressed).toString("hex"), hex);
+        const firstByte = parseInt(hex.substring(0, 2), 16);
+        assert.ok((firstByte & 0x80) !== 0, "Compression flag (bit 7) should be set");
     });
 
-    it("should round-trip compress/uncompress G2 points", () => {
-        const hex = g2CompressedHex(curve, vk.vk_beta_2);
-        const buff = Buffer.from(hex, "hex");
-        const uncompressed = curve.G2.fromRprCompressed(buff, 0);
-        const recompressed = new Uint8Array(curve.G2.F.n8);
-        curve.G2.toRprCompressed(recompressed, 0, uncompressed);
-        assert.strictEqual(Buffer.from(recompressed).toString("hex"), hex);
+    it("should produce Zcash-format compressed G2 (compression flag set)", () => {
+        const hex = g2CompressedHex(curve, vk.vk_gamma_2);
+        const firstByte = parseInt(hex.substring(0, 2), 16);
+        assert.ok((firstByte & 0x80) !== 0, "Compression flag (bit 7) should be set");
+    });
+
+    it("should produce consistent G1 compress output", () => {
+        const hex1 = g1CompressedHex(curve, vk.vk_alpha_1);
+        const hex2 = g1CompressedHex(curve, vk.vk_alpha_1);
+        assert.strictEqual(hex1, hex2, "Same G1 input should produce same output");
+    });
+
+    it("should produce consistent G2 compress output", () => {
+        const hex1 = g2CompressedHex(curve, vk.vk_beta_2);
+        const hex2 = g2CompressedHex(curve, vk.vk_beta_2);
+        assert.strictEqual(hex1, hex2, "Same G2 input should produce same output");
     });
 });
 

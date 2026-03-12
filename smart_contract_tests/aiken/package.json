@@ -1,0 +1,12 @@
+{
+  "name": "snarkjs-aiken-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "mocha --timeout 60000"
+  },
+  "devDependencies": {
+    "mocha": "^10.2.0",
+    "snarkjs": "file:../.."
+  }
+}

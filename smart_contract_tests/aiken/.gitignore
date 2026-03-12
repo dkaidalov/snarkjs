@@ -1,0 +1,4 @@
+node_modules/
+build/
+validators/groth16_verifier.ak
+packages/
