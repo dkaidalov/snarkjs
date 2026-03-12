@@ -254,6 +254,18 @@ const commands = [
         action: zkeyExportSolidityCalldata
     },
     {
+        cmd: "zkey export aikenverifier [circuit_final.zkey] [verifier.ak]",
+        description: "Creates a Groth16 verifier in Aiken (Cardano) for BLS12-381",
+        alias: ["zkeav"],
+        action: zkeyExportAikenVerifier
+    },
+    {
+        cmd: "zkey export aikencalldata [public.json] [proof.json]",
+        description: "Generates Aiken-compatible call data with compressed BLS12-381 points",
+        alias: ["zkeac"],
+        action: zkeyExportAikenCalldata
+    },
+    {
         cmd: "groth16 setup [circuit.r1cs] [powersoftau.ptau] [circuit_0000.zkey]",
         description: "Creates an initial groth16 pkey file with zero contributions",
         alias: ["g16s", "zkn", "zkey new"],
@@ -684,6 +696,68 @@ async function zkeyExportSolidityCalldata(params, options) {
     } else {
         throw new Error("Invalid Protocol");
     }
+    console.log(res);
+
+    return 0;
+}
+
+// zkey export aikenverifier [circuit_final.zkey] [verifier.ak]
+async function zkeyExportAikenVerifier(params, options) {
+    let zkeyName;
+    let verifierName;
+
+    if (params.length < 1) {
+        zkeyName = "circuit_final.zkey";
+    } else {
+        zkeyName = params[0];
+    }
+
+    if (params.length < 2) {
+        verifierName = "verifier.ak";
+    } else {
+        verifierName = params[1];
+    }
+
+    if (options.verbose) Logger.setLogLevel("DEBUG");
+
+    const templates = {};
+
+    if (await fileExists(path.join(__dirname, "templates"))) {
+        templates.groth16 = await fs.promises.readFile(path.join(__dirname, "templates", "verifier_groth16.ak.ejs"), "utf8");
+    } else {
+        templates.groth16 = await fs.promises.readFile(path.join(__dirname, "..", "templates", "verifier_groth16.ak.ejs"), "utf8");
+    }
+
+    const verifierCode = await zkey.exportAikenVerifier(zkeyName, templates, logger);
+
+    fs.writeFileSync(verifierName, verifierCode, "utf-8");
+
+    return 0;
+}
+
+// zkey export aikencalldata [public.json] [proof.json]
+async function zkeyExportAikenCalldata(params, options) {
+    let publicName;
+    let proofName;
+
+    if (params.length < 1) {
+        publicName = "public.json";
+    } else {
+        publicName = params[0];
+    }
+
+    if (params.length < 2) {
+        proofName = "proof.json";
+    } else {
+        proofName = params[1];
+    }
+
+    if (options.verbose) Logger.setLogLevel("DEBUG");
+
+    const pub = JSON.parse(fs.readFileSync(publicName, "utf8"));
+    const proof = JSON.parse(fs.readFileSync(proofName, "utf8"));
+
+    const res = await groth16.exportAikenCallData(proof, pub);
     console.log(res);
 
     return 0;
