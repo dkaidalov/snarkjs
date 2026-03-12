@@ -1,19 +1,20 @@
 import assert from "assert";
 import * as path from "path";
+import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import * as snarkjs from "../main.js";
+import { g1CompressedHex, g2CompressedHex } from "../src/aiken_utils.js";
+import { getCurveFromName } from "../src/curves.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bls12381Dir = path.join(__dirname, "groth16_bls12381");
 
+const vk = JSON.parse(readFileSync(path.join(bls12381Dir, "verification_key.json"), "utf8"));
+const proof = JSON.parse(readFileSync(path.join(bls12381Dir, "proof.json"), "utf8"));
+const publicSignals = JSON.parse(readFileSync(path.join(bls12381Dir, "public.json"), "utf8"));
+
 describe("BLS12-381 Groth16 test artifacts", () => {
     it("should verify the pre-generated BLS12-381 proof", async () => {
-        const { readFileSync } = await import("fs");
-
-        const vk = JSON.parse(readFileSync(path.join(bls12381Dir, "verification_key.json"), "utf8"));
-        const proof = JSON.parse(readFileSync(path.join(bls12381Dir, "proof.json"), "utf8"));
-        const publicSignals = JSON.parse(readFileSync(path.join(bls12381Dir, "public.json"), "utf8"));
-
         assert.strictEqual(vk.curve, "bls12381");
         assert.strictEqual(vk.protocol, "groth16");
 
@@ -22,17 +23,73 @@ describe("BLS12-381 Groth16 test artifacts", () => {
     });
 
     it("should reject a tampered BLS12-381 proof", async () => {
-        const { readFileSync } = await import("fs");
-
-        const vk = JSON.parse(readFileSync(path.join(bls12381Dir, "verification_key.json"), "utf8"));
-        const proof = JSON.parse(readFileSync(path.join(bls12381Dir, "proof.json"), "utf8"));
-        const publicSignals = JSON.parse(readFileSync(path.join(bls12381Dir, "public.json"), "utf8"));
-
-        // Tamper with a public signal
         const tamperedSignals = [...publicSignals];
         tamperedSignals[0] = "999";
 
         const isValid = await snarkjs.groth16.verify(vk, tamperedSignals, proof);
         assert.strictEqual(isValid, false, "Tampered proof should not verify");
+    });
+});
+
+describe("Aiken point compression utilities", () => {
+    let curve;
+
+    before(async () => {
+        curve = await getCurveFromName("bls12381");
+    });
+
+    after(async () => {
+        await curve.terminate();
+    });
+
+    it("should compress G1 points to 96-char hex (48 bytes)", () => {
+        const hex = g1CompressedHex(curve, vk.vk_alpha_1);
+        assert.strictEqual(typeof hex, "string");
+        assert.strictEqual(hex.length, 96, "G1 compressed should be 48 bytes = 96 hex chars");
+        assert.match(hex, /^[0-9a-f]+$/, "Should be valid hex");
+    });
+
+    it("should compress G2 points to 192-char hex (96 bytes)", () => {
+        const hex = g2CompressedHex(curve, vk.vk_beta_2);
+        assert.strictEqual(typeof hex, "string");
+        assert.strictEqual(hex.length, 192, "G2 compressed should be 96 bytes = 192 hex chars");
+        assert.match(hex, /^[0-9a-f]+$/, "Should be valid hex");
+    });
+
+    it("should compress all IC points", () => {
+        for (let i = 0; i < vk.IC.length; i++) {
+            const hex = g1CompressedHex(curve, vk.IC[i]);
+            assert.strictEqual(hex.length, 96, `IC[${i}] should be 96 hex chars`);
+        }
+    });
+
+    it("should produce consistent output for same input", () => {
+        const hex1 = g1CompressedHex(curve, vk.vk_alpha_1);
+        const hex2 = g1CompressedHex(curve, vk.vk_alpha_1);
+        assert.strictEqual(hex1, hex2, "Same input should produce same output");
+    });
+
+    it("should produce different output for different points", () => {
+        const hex1 = g2CompressedHex(curve, vk.vk_beta_2);
+        const hex2 = g2CompressedHex(curve, vk.vk_gamma_2);
+        assert.notStrictEqual(hex1, hex2, "Different points should produce different output");
+    });
+
+    it("should round-trip compress/uncompress G1 points", () => {
+        const hex = g1CompressedHex(curve, vk.vk_alpha_1);
+        const buff = Buffer.from(hex, "hex");
+        const uncompressed = curve.G1.fromRprCompressed(buff, 0);
+        const recompressed = new Uint8Array(curve.G1.F.n8);
+        curve.G1.toRprCompressed(recompressed, 0, uncompressed);
+        assert.strictEqual(Buffer.from(recompressed).toString("hex"), hex);
+    });
+
+    it("should round-trip compress/uncompress G2 points", () => {
+        const hex = g2CompressedHex(curve, vk.vk_beta_2);
+        const buff = Buffer.from(hex, "hex");
+        const uncompressed = curve.G2.fromRprCompressed(buff, 0);
+        const recompressed = new Uint8Array(curve.G2.F.n8);
+        curve.G2.toRprCompressed(recompressed, 0, uncompressed);
+        assert.strictEqual(Buffer.from(recompressed).toString("hex"), hex);
     });
 });
