@@ -17,9 +17,12 @@ function toZcashFlags(buff) {
 }
 
 // Variant of Keccak256Transcript that uses compressed G1 points (Zcash/BLST format, 48 bytes)
-// instead of uncompressed (96 bytes). Used for BLS12-381 PLONK so that the Aiken on-chain
-// verifier can compute the same challenges using the compressed calldata bytes directly.
-export class AikenKeccak256Transcript {
+// instead of uncompressed (96 bytes). This is needed because Cardano's Plutus V3 builtins
+// does not allow direct access to uncompressed points — the on-chain verifier
+// cannot operate with uncompressed bytes. By hashing compressed points in the
+// Fiat-Shamir transcript off-chain, the prover produces challenges that the smart contract
+// can reproduce.
+export class Keccak256TranscriptCompressed {
     constructor(curve) {
         this.G1 = curve.G1;
         this.Fr = curve.Fr;
@@ -41,7 +44,7 @@ export class AikenKeccak256Transcript {
 
     getChallenge() {
         if(0 === this.data.length) {
-            throw new Error("AikenKeccak256Transcript: No data to generate a transcript");
+            throw new Error("Keccak256TranscriptCompressed: No data to generate a transcript");
         }
 
         let nPolynomials = 0;
