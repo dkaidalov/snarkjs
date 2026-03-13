@@ -23,3 +23,5 @@ export { default as fullProve } from "./fflonk_full_prove.js";
 export { default as verify } from "./fflonk_verify.js";
 export { default as exportSolidityVerifier } from "./fflonk_export_solidity_verifier.js";
 export { default as exportSolidityCallData } from "./fflonk_export_calldata.js";
+export { default as exportAikenVerifier } from "./fflonk_exportaikenverifier.js";
+export { default as exportAikenCallData } from "./fflonk_exportaikencalldata.js";

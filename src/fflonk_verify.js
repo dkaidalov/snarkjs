@@ -21,6 +21,7 @@ import * as curves from "./curves.js";
 import { BigBuffer, utils } from "ffjavascript";
 import { Proof } from "./proof.js";
 import { Keccak256Transcript } from "./Keccak256Transcript.js";
+import { Keccak256TranscriptCompressed } from "./Keccak256TranscriptCompressed.js";
 import { Scalar } from "ffjavascript";
 
 const { unstringifyBigInts } = utils;
@@ -200,7 +201,7 @@ function computeChallenges(curve, proof, vk, publicSignals, logger) {
 
     const challenges = {};
     const roots = {};
-    const transcript = new Keccak256Transcript(curve);
+    const transcript = curve.name === "bls12381" ? new Keccak256TranscriptCompressed(curve) : new Keccak256Transcript(curve);
 
     // Add C0 to the transcript
     transcript.addPolCommitment(vk.C0);
