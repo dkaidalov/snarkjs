@@ -10,6 +10,8 @@ import exportAikenVerifier from "../src/zkey_export_aikenverifier.js";
 import groth16ExportAikenCallData from "../src/groth16_exportaikencalldata.js";
 import exportPlonkAikenVerifier from "../src/plonk_exportaikenverifier.js";
 import plonkExportAikenCallData from "../src/plonk_exportaikencalldata.js";
+import exportFflonkAikenVerifier from "../src/fflonk_exportaikenverifier.js";
+import fflonkExportAikenCallData from "../src/fflonk_exportaikencalldata.js";
 
 const { unstringifyBigInts } = utils;
 
@@ -356,5 +358,160 @@ describe("Aiken PLONK calldata export", () => {
 
     it("should be accessible via snarkjs.plonk.exportAikenCallData", () => {
         assert.strictEqual(typeof snarkjs.plonk.exportAikenCallData, "function", "Should be exported from facade");
+    });
+});
+
+// ===== BLS12-381 FFLONK Aiken tests =====
+
+const fflonkDir = path.join(__dirname, "fflonk_bls12381");
+const fflonkProof = JSON.parse(readFileSync(path.join(fflonkDir, "proof.json"), "utf8"));
+const fflonkPublicSignals = JSON.parse(readFileSync(path.join(fflonkDir, "public.json"), "utf8"));
+const fflonkVk = JSON.parse(readFileSync(path.join(fflonkDir, "verification_key.json"), "utf8"));
+const fflonkZkeyPath = path.join(fflonkDir, "circuit.zkey");
+
+describe("BLS12-381 FFLONK round-trip", () => {
+    it("should verify the pre-generated BLS12-381 FFLONK proof", async () => {
+        assert.strictEqual(fflonkVk.curve, "bls12381");
+        assert.strictEqual(fflonkVk.protocol, "fflonk");
+
+        const isValid = await snarkjs.fflonk.verify(fflonkVk, fflonkPublicSignals, fflonkProof);
+        assert.strictEqual(isValid, true, "BLS12-381 FFLONK proof should verify successfully");
+    });
+
+    it("should reject a tampered BLS12-381 FFLONK proof", async () => {
+        const tamperedSignals = [...fflonkPublicSignals];
+        tamperedSignals[0] = "999";
+
+        const isValid = await snarkjs.fflonk.verify(fflonkVk, tamperedSignals, fflonkProof);
+        assert.strictEqual(isValid, false, "Tampered FFLONK proof should not verify");
+    });
+});
+
+describe("Aiken FFLONK verifier export", () => {
+    const templatePath = path.join(__dirname, "..", "templates", "verifier_fflonk.ak.ejs");
+    let templates;
+
+    before(() => {
+        templates = {
+            fflonk: readFileSync(templatePath, "utf8"),
+        };
+    });
+
+    it("should export a valid Aiken FFLONK verifier from BLS12-381 zkey", async () => {
+        const code = await exportFflonkAikenVerifier(fflonkZkeyPath, templates);
+
+        assert.ok(code.includes("pub fn verify("), "Should contain verify function");
+        assert.ok(code.includes("FflonkProof"), "Should contain FflonkProof type");
+        assert.ok(code.includes("keccak_challenge"), "Should contain Keccak transcript");
+        assert.ok(code.includes("builtin.bls12_381_g1_scalar_mul"), "Should use G1 scalar mul");
+        assert.ok(code.includes("builtin.bls12_381_final_verify"), "Should use final verify");
+        assert.ok(code.includes("fr_inv"), "Should contain field inversion");
+    });
+
+    it("should embed VK points as hex byte arrays", async () => {
+        const code = await exportFflonkAikenVerifier(fflonkZkeyPath, templates);
+
+        const g1Pattern = /#"[0-9a-f]{96}"/;
+        const g2Pattern = /#"[0-9a-f]{192}"/;
+        assert.ok(g1Pattern.test(code), "Should contain G1 hex byte arrays (48 bytes)");
+        assert.ok(g2Pattern.test(code), "Should contain G2 hex byte arrays (96 bytes)");
+    });
+
+    it("should embed domain parameters", async () => {
+        const code = await exportFflonkAikenVerifier(fflonkZkeyPath, templates);
+
+        assert.ok(code.includes("const domain_size: Int = 32"), "Should embed domain_size");
+        assert.ok(code.includes("const k1: Int = 2"), "Should embed k1");
+        assert.ok(code.includes("const k2: Int = 3"), "Should embed k2");
+    });
+
+    it("should embed test proof when provided", async () => {
+        const curve = await getCurveFromName("bls12381");
+        try {
+            const p = unstringifyBigInts(fflonkProof);
+            const testProof = {
+                c1:  g1CompressedHex(curve, p.polynomials.C1),
+                c2:  g1CompressedHex(curve, p.polynomials.C2),
+                w1:  g1CompressedHex(curve, p.polynomials.W1),
+                w2:  g1CompressedHex(curve, p.polynomials.W2),
+                eval_ql:  p.evaluations.ql.toString(),
+                eval_qr:  p.evaluations.qr.toString(),
+                eval_qm:  p.evaluations.qm.toString(),
+                eval_qo:  p.evaluations.qo.toString(),
+                eval_qc:  p.evaluations.qc.toString(),
+                eval_s1:  p.evaluations.s1.toString(),
+                eval_s2:  p.evaluations.s2.toString(),
+                eval_s3:  p.evaluations.s3.toString(),
+                eval_a:   p.evaluations.a.toString(),
+                eval_b:   p.evaluations.b.toString(),
+                eval_c:   p.evaluations.c.toString(),
+                eval_z:   p.evaluations.z.toString(),
+                eval_zw:  p.evaluations.zw.toString(),
+                eval_t1w: p.evaluations.t1w.toString(),
+                eval_t2w: p.evaluations.t2w.toString(),
+            };
+            const code = await exportFflonkAikenVerifier(fflonkZkeyPath, templates, null, {
+                testProof,
+                testPublicSignals: fflonkPublicSignals,
+            });
+
+            assert.ok(code.includes("test verify_valid_proof()"), "Should contain valid proof test");
+            assert.ok(code.includes("test verify_invalid_proof() fail"), "Should contain invalid proof test");
+        } finally {
+            await curve.terminate();
+        }
+    });
+
+    it("should reject non-FFLONK or non-BLS12-381 zkeys", async () => {
+        const plonkZkey = path.join(__dirname, "plonk_bls12381", "circuit.zkey");
+        await assert.rejects(
+            () => exportFflonkAikenVerifier(plonkZkey, templates),
+            /only supports fflonk/,
+            "Should reject non-FFLONK zkeys"
+        );
+    });
+
+    it("should be accessible via snarkjs.fflonk.exportAikenVerifier", () => {
+        assert.strictEqual(typeof snarkjs.fflonk.exportAikenVerifier, "function", "Should be exported from facade");
+    });
+});
+
+describe("Aiken FFLONK calldata export", () => {
+    it("should export valid JSON with all proof fields", async () => {
+        const result = await fflonkExportAikenCallData(fflonkProof, fflonkPublicSignals);
+        const parsed = JSON.parse(result);
+
+        // Check all G1 compressed fields
+        for (const field of ["c1", "c2", "w1", "w2"]) {
+            assert.ok(parsed[field], `Should have ${field}`);
+            assert.strictEqual(parsed[field].length, 96, `${field} should be 96 hex chars (48 bytes)`);
+            assert.match(parsed[field], /^[0-9a-f]+$/, `${field} should be valid hex`);
+        }
+
+        // Check Fr scalar evaluations
+        for (const field of ["eval_ql", "eval_qr", "eval_qm", "eval_qo", "eval_qc",
+                             "eval_s1", "eval_s2", "eval_s3", "eval_a", "eval_b", "eval_c",
+                             "eval_z", "eval_zw", "eval_t1w", "eval_t2w", "eval_inv"]) {
+            assert.ok(parsed[field] !== undefined, `Should have ${field}`);
+            assert.match(parsed[field], /^\d+$/, `${field} should be a decimal string`);
+        }
+
+        // Check public signals
+        assert.ok(Array.isArray(parsed.public_signals), "Should have public_signals array");
+        assert.strictEqual(parsed.public_signals.length, fflonkPublicSignals.length, "Should have correct number of public signals");
+    });
+
+    it("should have Zcash-format compression flags on G1 points", async () => {
+        const result = await fflonkExportAikenCallData(fflonkProof, fflonkPublicSignals);
+        const parsed = JSON.parse(result);
+
+        for (const field of ["c1", "c2", "w1", "w2"]) {
+            const firstByte = parseInt(parsed[field].substring(0, 2), 16);
+            assert.ok((firstByte & 0x80) !== 0, `${field}: compression flag (bit 7) should be set`);
+        }
+    });
+
+    it("should be accessible via snarkjs.fflonk.exportAikenCallData", () => {
+        assert.strictEqual(typeof snarkjs.fflonk.exportAikenCallData, "function", "Should be exported from facade");
     });
 });
