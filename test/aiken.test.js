@@ -2,11 +2,16 @@ import assert from "assert";
 import * as path from "path";
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
+import { utils } from "ffjavascript";
 import * as snarkjs from "../main.js";
 import { g1CompressedHex, g2CompressedHex } from "../src/aiken_utils.js";
 import { getCurveFromName } from "../src/curves.js";
 import exportAikenVerifier from "../src/zkey_export_aikenverifier.js";
 import groth16ExportAikenCallData from "../src/groth16_exportaikencalldata.js";
+import exportPlonkAikenVerifier from "../src/plonk_exportaikenverifier.js";
+import plonkExportAikenCallData from "../src/plonk_exportaikencalldata.js";
+
+const { unstringifyBigInts } = utils;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bls12381Dir = path.join(__dirname, "groth16_bls12381");
@@ -212,5 +217,144 @@ describe("Aiken calldata export", () => {
 
     it("should be accessible via snarkjs.groth16.exportAikenCallData", async () => {
         assert.strictEqual(typeof snarkjs.groth16.exportAikenCallData, "function", "Should be exported from facade");
+    });
+});
+
+// ===== BLS12-381 PLONK Aiken tests =====
+
+const plonkDir = path.join(__dirname, "plonk_bls12381");
+const plonkProof = JSON.parse(readFileSync(path.join(plonkDir, "proof.json"), "utf8"));
+const plonkPublicSignals = JSON.parse(readFileSync(path.join(plonkDir, "public.json"), "utf8"));
+const plonkVk = JSON.parse(readFileSync(path.join(plonkDir, "verification_key.json"), "utf8"));
+const plonkZkeyPath = path.join(plonkDir, "circuit.zkey");
+
+describe("BLS12-381 PLONK round-trip", () => {
+    it("should verify the pre-generated BLS12-381 PLONK proof", async () => {
+        assert.strictEqual(plonkVk.curve, "bls12381");
+        assert.strictEqual(plonkVk.protocol, "plonk");
+
+        const isValid = await snarkjs.plonk.verify(plonkVk, plonkPublicSignals, plonkProof);
+        assert.strictEqual(isValid, true, "BLS12-381 PLONK proof should verify successfully");
+    });
+
+    it("should reject a tampered BLS12-381 PLONK proof", async () => {
+        const tamperedSignals = [...plonkPublicSignals];
+        tamperedSignals[0] = "999";
+
+        const isValid = await snarkjs.plonk.verify(plonkVk, tamperedSignals, plonkProof);
+        assert.strictEqual(isValid, false, "Tampered PLONK proof should not verify");
+    });
+});
+
+describe("Aiken PLONK verifier export", () => {
+    const templatePath = path.join(__dirname, "..", "templates", "verifier_plonk.ak.ejs");
+    let templates;
+
+    before(() => {
+        templates = {
+            plonk: readFileSync(templatePath, "utf8"),
+        };
+    });
+
+    it("should export a valid Aiken PLONK verifier from BLS12-381 zkey", async () => {
+        const code = await exportPlonkAikenVerifier(plonkZkeyPath, templates);
+
+        assert.ok(code.includes("pub fn verify("), "Should contain verify function");
+        assert.ok(code.includes("keccak_challenge"), "Should contain Keccak transcript");
+        assert.ok(code.includes("builtin.bls12_381_g1_scalar_mul"), "Should use G1 scalar mul");
+        assert.ok(code.includes("builtin.bls12_381_final_verify"), "Should use final verify");
+        assert.ok(code.includes("builtin.keccak_256"), "Should use Keccak-256");
+        assert.ok(code.includes("fr_inv"), "Should contain field inversion");
+    });
+
+    it("should embed VK points as hex byte arrays", async () => {
+        const code = await exportPlonkAikenVerifier(plonkZkeyPath, templates);
+
+        const g1Pattern = /#"[0-9a-f]{96}"/;
+        const g2Pattern = /#"[0-9a-f]{192}"/;
+        assert.ok(g1Pattern.test(code), "Should contain G1 hex byte arrays (48 bytes)");
+        assert.ok(g2Pattern.test(code), "Should contain G2 hex byte arrays (96 bytes)");
+    });
+
+    it("should embed test proof when provided", async () => {
+        const curve = await getCurveFromName("bls12381");
+        try {
+            const p = unstringifyBigInts(plonkProof);
+            const testProof = {
+                a:    g1CompressedHex(curve, p.A),
+                b:    g1CompressedHex(curve, p.B),
+                c:    g1CompressedHex(curve, p.C),
+                z:    g1CompressedHex(curve, p.Z),
+                t1:   g1CompressedHex(curve, p.T1),
+                t2:   g1CompressedHex(curve, p.T2),
+                t3:   g1CompressedHex(curve, p.T3),
+                wxi:  g1CompressedHex(curve, p.Wxi),
+                wxiw: g1CompressedHex(curve, p.Wxiw),
+                eval_a:  p.eval_a.toString(),
+                eval_b:  p.eval_b.toString(),
+                eval_c:  p.eval_c.toString(),
+                eval_s1: p.eval_s1.toString(),
+                eval_s2: p.eval_s2.toString(),
+                eval_zw: p.eval_zw.toString(),
+            };
+            const code = await exportPlonkAikenVerifier(plonkZkeyPath, templates, null, {
+                testProof,
+                testPublicSignals: plonkPublicSignals,
+            });
+
+            assert.ok(code.includes("test verify_valid_proof()"), "Should contain valid proof test");
+            assert.ok(code.includes("test verify_invalid_proof() fail"), "Should contain invalid proof test");
+        } finally {
+            await curve.terminate();
+        }
+    });
+
+    it("should reject non-PLONK or non-BLS12-381 zkeys", async () => {
+        const groth16ZkeyPath = path.join(__dirname, "groth16_bls12381", "circuit.zkey");
+        await assert.rejects(
+            () => exportPlonkAikenVerifier(groth16ZkeyPath, templates),
+            /only supports plonk/,
+            "Should reject non-PLONK zkeys"
+        );
+    });
+
+    it("should be accessible via snarkjs.plonk.exportAikenVerifier", () => {
+        assert.strictEqual(typeof snarkjs.plonk.exportAikenVerifier, "function", "Should be exported from facade");
+    });
+});
+
+describe("Aiken PLONK calldata export", () => {
+    it("should export valid JSON with all proof fields", async () => {
+        const result = await plonkExportAikenCallData(plonkProof, plonkPublicSignals);
+        const parsed = JSON.parse(result);
+
+        // Check all G1 compressed fields
+        for (const field of ["a", "b", "c", "z", "t1", "t2", "t3", "wxi", "wxiw"]) {
+            assert.ok(parsed[field], `Should have ${field}`);
+            assert.strictEqual(parsed[field].length, 96, `${field} should be 96 hex chars (48 bytes)`);
+            assert.match(parsed[field], /^[0-9a-f]+$/, `${field} should be valid hex`);
+        }
+
+        // Check Fr scalar evaluations
+        for (const field of ["eval_a", "eval_b", "eval_c", "eval_s1", "eval_s2", "eval_zw"]) {
+            assert.ok(parsed[field], `Should have ${field}`);
+            assert.match(parsed[field], /^\d+$/, `${field} should be a decimal string`);
+        }
+
+        // Check public signals
+        assert.ok(Array.isArray(parsed.public_signals), "Should have public_signals array");
+        assert.strictEqual(parsed.public_signals.length, plonkPublicSignals.length, "Should have correct number of public signals");
+    });
+
+    it("should have Zcash-format compression flags on G1 points", async () => {
+        const result = await plonkExportAikenCallData(plonkProof, plonkPublicSignals);
+        const parsed = JSON.parse(result);
+
+        const firstByte = parseInt(parsed.a.substring(0, 2), 16);
+        assert.ok((firstByte & 0x80) !== 0, "Compression flag (bit 7) should be set");
+    });
+
+    it("should be accessible via snarkjs.plonk.exportAikenCallData", () => {
+        assert.strictEqual(typeof snarkjs.plonk.exportAikenCallData, "function", "Should be exported from facade");
     });
 });

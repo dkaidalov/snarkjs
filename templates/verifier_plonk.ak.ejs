@@ -1,0 +1,451 @@
+// Generated with [snarkJS](https://github.com/iden3/snarkjs).
+//
+// snarkJS is a free software: you can redistribute it and/or modify it
+// under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// PLONK BLS12-381 verifier for Aiken (Cardano).
+// Fiat-Shamir transcript uses Keccak-256 with compressed G1 points (Zcash/BLST format).
+
+use aiken/builtin
+
+// ===== Verification Key =====
+
+// Selector polynomial commitments (G1 compressed, 48 bytes, Zcash format)
+const vk_qm: ByteArray = #"<%= vk_qm %>"
+const vk_ql: ByteArray = #"<%= vk_ql %>"
+const vk_qr: ByteArray = #"<%= vk_qr %>"
+const vk_qo: ByteArray = #"<%= vk_qo %>"
+const vk_qc: ByteArray = #"<%= vk_qc %>"
+
+// Permutation polynomial commitments (G1 compressed, 48 bytes)
+const vk_s1: ByteArray = #"<%= vk_s1 %>"
+const vk_s2: ByteArray = #"<%= vk_s2 %>"
+const vk_s3: ByteArray = #"<%= vk_s3 %>"
+
+// KZG SRS commitment (G2 compressed, 96 bytes)
+const vk_x2: ByteArray = #"<%= vk_x2 %>"
+
+// Domain parameters (embedded from zkey)
+const domain_size: Int = <%= domain_size %>
+const k1: Int = <%= k1 %>
+const k2: Int = <%= k2 %>
+const omega: Int = <%= omega %>
+
+// BLS12-381 scalar field modulus r
+const r: Int =
+  52435875175126190479447740508185965837690552500527637822603658699938581184513
+
+// Curve generators (compressed)
+const g1_gen: ByteArray = #"<%= g1_gen %>"
+const g2_gen: ByteArray = #"<%= g2_gen %>"
+
+// Concatenated VK G1 bytes: used as transcript prefix in beta/gamma round
+const vk_bytes: ByteArray = #"<%= vk_bytes %>"
+
+// ===== Proof type =====
+
+pub type PlonkProof {
+  // G1 polynomial commitments (compressed, 48 bytes each, Zcash format)
+  a: ByteArray,
+  b: ByteArray,
+  c: ByteArray,
+  z: ByteArray,
+  t1: ByteArray,
+  t2: ByteArray,
+  t3: ByteArray,
+  wxi: ByteArray,
+  wxiw: ByteArray,
+  // Polynomial evaluations at challenge xi (scalars in Fr)
+  eval_a: Int,
+  eval_b: Int,
+  eval_c: Int,
+  eval_s1: Int,
+  eval_s2: Int,
+  eval_zw: Int,
+}
+
+// ===== PLONK verifier =====
+
+/// PLONK proof verification for BLS12-381.
+///
+/// Arguments:
+///   proof          - PLONK proof (9 G1 commitments + 6 polynomial evaluations)
+///   public_signals - list of public input scalars (must have <%= nPublic %> element(s))
+///
+/// Returns True if the proof is valid.
+pub fn verify(proof: PlonkProof, public_signals: List<Int>) -> Bool {
+  // ----- Uncompress proof G1 points -----
+  let pt_a    = builtin.bls12_381_g1_uncompress(proof.a)
+  let pt_b    = builtin.bls12_381_g1_uncompress(proof.b)
+  let pt_c    = builtin.bls12_381_g1_uncompress(proof.c)
+  let pt_z    = builtin.bls12_381_g1_uncompress(proof.z)
+  let pt_t1   = builtin.bls12_381_g1_uncompress(proof.t1)
+  let pt_t2   = builtin.bls12_381_g1_uncompress(proof.t2)
+  let pt_t3   = builtin.bls12_381_g1_uncompress(proof.t3)
+  let pt_wxi  = builtin.bls12_381_g1_uncompress(proof.wxi)
+  let pt_wxiw = builtin.bls12_381_g1_uncompress(proof.wxiw)
+
+  // ----- Uncompress VK points -----
+  let pt_qm = builtin.bls12_381_g1_uncompress(vk_qm)
+  let pt_ql = builtin.bls12_381_g1_uncompress(vk_ql)
+  let pt_qr = builtin.bls12_381_g1_uncompress(vk_qr)
+  let pt_qo = builtin.bls12_381_g1_uncompress(vk_qo)
+  let pt_qc = builtin.bls12_381_g1_uncompress(vk_qc)
+  let pt_s1 = builtin.bls12_381_g1_uncompress(vk_s1)
+  let pt_s2 = builtin.bls12_381_g1_uncompress(vk_s2)
+  let pt_s3 = builtin.bls12_381_g1_uncompress(vk_s3)
+  let pt_x2 = builtin.bls12_381_g2_uncompress(vk_x2)
+  let pt_g1 = builtin.bls12_381_g1_uncompress(g1_gen)
+  let pt_g2 = builtin.bls12_381_g2_uncompress(g2_gen)
+
+  // ----- Fiat-Shamir challenges (Keccak256 with compressed G1 points) -----
+
+  // Round 1: beta = H(VK_bytes || public_inputs_bytes || A || B || C)
+  let beta =
+    keccak_challenge(
+      ba(ba(ba(ba(vk_bytes, signals_to_bytes(public_signals)), proof.a), proof.b), proof.c)
+    )
+
+  // Round 1: gamma = H(beta)
+  let gamma = keccak_challenge(fr_to_bytes(beta))
+
+  // Round 2: alpha = H(beta || gamma || Z)
+  let alpha =
+    keccak_challenge(ba(ba(fr_to_bytes(beta), fr_to_bytes(gamma)), proof.z))
+
+  // Round 3: xi = H(alpha || T1 || T2 || T3)
+  let xi =
+    keccak_challenge(
+      ba(ba(ba(fr_to_bytes(alpha), proof.t1), proof.t2), proof.t3)
+    )
+
+  // Round 4: v1 = H(xi || eval_a || eval_b || eval_c || eval_s1 || eval_s2 || eval_zw)
+  let v1 =
+    keccak_challenge(
+      ba(ba(ba(ba(ba(ba(fr_to_bytes(xi), fr_to_bytes(proof.eval_a)), fr_to_bytes(proof.eval_b)), fr_to_bytes(proof.eval_c)), fr_to_bytes(proof.eval_s1)), fr_to_bytes(proof.eval_s2)), fr_to_bytes(proof.eval_zw))
+    )
+  let v2 = fr_mul(v1, v1)
+  let v3 = fr_mul(v2, v1)
+  let v4 = fr_mul(v3, v1)
+  let v5 = fr_mul(v4, v1)
+
+  // Round 5: u = H(Wxi || Wxiw)
+  let u = keccak_challenge(ba(proof.wxi, proof.wxiw))
+
+  // ----- Domain evaluations -----
+
+  // xin = xi^domain_size
+  let xin = fr_pow(xi, domain_size)
+  // zh = xin - 1  (vanishing polynomial)
+  let zh = fr_sub(xin, 1)
+
+  // ----- Lagrange polynomial evaluations -----
+  // L_i(xi) = w_i * zh / (n * (xi - w_i))  where w_i = omega^(i-1), w_1 = 1
+  //
+  // l1 (w=1, always computed, used in permutation boundary check and PI)
+  let l1 = fr_mul(zh, fr_inv(fr_mul(domain_size, fr_sub(xi, 1))))
+
+  // Additional Lagrange evaluations for public inputs (l2 = L[2], l3 = L[3], ...)
+<% for (let i = 1; i < nPublic; i++) { -%>
+  let l<%= i + 1 %>_w = fr_pow(omega, <%= i %>)
+  let l<%= i + 1 %> =
+    fr_mul(
+      fr_mul(l<%= i + 1 %>_w, zh),
+      fr_inv(fr_mul(domain_size, fr_sub(xi, l<%= i + 1 %>_w)))
+    )
+<% } -%>
+
+  // ----- PI polynomial: PI(xi) = -sum_{i=0}^{nPublic-1}(public_signals[i] * L[i+1]) -----
+<% if (nPublic === 0) { -%>
+  let pi = 0
+<% } else if (nPublic === 1) { -%>
+  let pi = fr_neg(fr_mul(list_at_or_zero(public_signals, 0), l1))
+<% } else { -%>
+  let pi_pos =
+<% for (let i = 0; i < nPublic - 1; i++) { -%>
+    fr_add(
+      fr_mul(list_at_or_zero(public_signals, <%= i %>), l<%= i + 1 %>),
+<% } -%>
+    fr_mul(list_at_or_zero(public_signals, <%= nPublic - 1 %>), l<%= nPublic %>)
+<% for (let i = 0; i < nPublic - 1; i++) { -%>
+    )
+<% } -%>
+  let pi = fr_neg(pi_pos)
+<% } -%>
+
+  // ----- r0 (linear combination for pairing) -----
+  let alpha2 = fr_mul(alpha, alpha)
+  let e3a = fr_add(fr_add(proof.eval_a, fr_mul(beta, proof.eval_s1)), gamma)
+  let e3b = fr_add(fr_add(proof.eval_b, fr_mul(beta, proof.eval_s2)), gamma)
+  let e3c = fr_add(proof.eval_c, gamma)
+  let e3 =
+    fr_mul(fr_mul(fr_mul(fr_mul(e3a, e3b), e3c), proof.eval_zw), alpha)
+  let r0 = fr_sub(fr_sub(pi, fr_mul(l1, alpha2)), e3)
+
+  // ----- D point -----
+  // d1 = Qm*(a*b) + Ql*a + Qr*b + Qo*c + Qc
+  let d1 =
+    builtin.bls12_381_g1_add(
+      builtin.bls12_381_g1_add(
+        builtin.bls12_381_g1_add(
+          builtin.bls12_381_g1_add(
+            builtin.bls12_381_g1_scalar_mul(
+              fr_mul(proof.eval_a, proof.eval_b),
+              pt_qm,
+            ),
+            builtin.bls12_381_g1_scalar_mul(proof.eval_a, pt_ql),
+          ),
+          builtin.bls12_381_g1_scalar_mul(proof.eval_b, pt_qr),
+        ),
+        builtin.bls12_381_g1_scalar_mul(proof.eval_c, pt_qo),
+      ),
+      pt_qc,
+    )
+
+  // d2 = Z * (d2a + d2b + u)
+  let betaxi = fr_mul(beta, xi)
+  let d2a1 = fr_add(fr_add(proof.eval_a, betaxi), gamma)
+  let d2a2 = fr_add(fr_add(proof.eval_b, fr_mul(betaxi, k1)), gamma)
+  let d2a3 = fr_add(fr_add(proof.eval_c, fr_mul(betaxi, k2)), gamma)
+  let d2a = fr_mul(fr_mul(fr_mul(d2a1, d2a2), d2a3), alpha)
+  let d2b = fr_mul(l1, alpha2)
+  let d2 =
+    builtin.bls12_381_g1_scalar_mul(fr_add(fr_add(d2a, d2b), u), pt_z)
+
+  // d3 = S3 * (d3a * d3b * d3c)
+  let d3a = fr_add(fr_add(proof.eval_a, fr_mul(beta, proof.eval_s1)), gamma)
+  let d3b = fr_add(fr_add(proof.eval_b, fr_mul(beta, proof.eval_s2)), gamma)
+  let d3c = fr_mul(fr_mul(alpha, beta), proof.eval_zw)
+  let d3 =
+    builtin.bls12_381_g1_scalar_mul(fr_mul(fr_mul(d3a, d3b), d3c), pt_s3)
+
+  // d4 = (T1 + T2*xin + T3*xin^2) * zh
+  let d4 =
+    builtin.bls12_381_g1_scalar_mul(
+      zh,
+      builtin.bls12_381_g1_add(
+        builtin.bls12_381_g1_add(
+          pt_t1,
+          builtin.bls12_381_g1_scalar_mul(xin, pt_t2),
+        ),
+        builtin.bls12_381_g1_scalar_mul(fr_mul(xin, xin), pt_t3),
+      ),
+    )
+
+  // D = d1 + d2 - d3 - d4
+  let pt_d =
+    g1_sub(g1_sub(builtin.bls12_381_g1_add(d1, d2), d3), d4)
+
+  // ----- F point: D + A*v1 + B*v2 + C*v3 + S1*v4 + S2*v5 -----
+  let pt_f =
+    builtin.bls12_381_g1_add(
+      builtin.bls12_381_g1_add(
+        builtin.bls12_381_g1_add(
+          builtin.bls12_381_g1_add(
+            builtin.bls12_381_g1_add(
+              pt_d,
+              builtin.bls12_381_g1_scalar_mul(v1, pt_a),
+            ),
+            builtin.bls12_381_g1_scalar_mul(v2, pt_b),
+          ),
+          builtin.bls12_381_g1_scalar_mul(v3, pt_c),
+        ),
+        builtin.bls12_381_g1_scalar_mul(v4, pt_s1),
+      ),
+      builtin.bls12_381_g1_scalar_mul(v5, pt_s2),
+    )
+
+  // ----- E point: G1_gen * e_scalar -----
+  let e_scalar =
+    fr_add(
+      fr_add(
+        fr_add(
+          fr_add(
+            fr_add(
+              fr_add(fr_neg(r0), fr_mul(v1, proof.eval_a)),
+              fr_mul(v2, proof.eval_b),
+            ),
+            fr_mul(v3, proof.eval_c),
+          ),
+          fr_mul(v4, proof.eval_s1),
+        ),
+        fr_mul(v5, proof.eval_s2),
+      ),
+      fr_mul(u, proof.eval_zw),
+    )
+  let pt_e = builtin.bls12_381_g1_scalar_mul(e_scalar, pt_g1)
+
+  // ----- KZG pairing check -----
+  // A1 = Wxi + u*Wxiw
+  let pt_a1 =
+    builtin.bls12_381_g1_add(
+      pt_wxi,
+      builtin.bls12_381_g1_scalar_mul(u, pt_wxiw),
+    )
+
+  // s = u * xi * omega
+  let s = fr_mul(fr_mul(u, xi), omega)
+
+  // B1 = xi*Wxi + s*Wxiw + F - E
+  let pt_b1 =
+    g1_sub(
+      builtin.bls12_381_g1_add(
+        builtin.bls12_381_g1_add(
+          builtin.bls12_381_g1_scalar_mul(xi, pt_wxi),
+          builtin.bls12_381_g1_scalar_mul(s, pt_wxiw),
+        ),
+        pt_f,
+      ),
+      pt_e,
+    )
+
+  // Check: e(A1, X2) == e(B1, G2_gen)
+  // Equivalent to the original: e(-A1, X2) * e(B1, G2_gen) == 1
+  builtin.bls12_381_final_verify(
+    builtin.bls12_381_miller_loop(pt_a1, pt_x2),
+    builtin.bls12_381_miller_loop(pt_b1, pt_g2),
+  )
+}
+
+// ===== Fr field arithmetic =====
+
+fn fr_add(a: Int, b: Int) -> Int {
+  ( a + b ) % r
+}
+
+fn fr_sub(a: Int, b: Int) -> Int {
+  ( a - b + r ) % r
+}
+
+fn fr_mul(a: Int, b: Int) -> Int {
+  a * b % r
+}
+
+fn fr_neg(a: Int) -> Int {
+  if a == 0 {
+    0
+  } else {
+    r - a
+  }
+}
+
+// Fast exponentiation (square-and-multiply)
+fn fr_pow(base: Int, exp: Int) -> Int {
+  fr_pow_acc(base % r, exp, 1)
+}
+
+fn fr_pow_acc(base: Int, exp: Int, acc: Int) -> Int {
+  if exp == 0 {
+    acc
+  } else if exp % 2 == 1 {
+    fr_pow_acc(base * base % r, exp / 2, acc * base % r)
+  } else {
+    fr_pow_acc(base * base % r, exp / 2, acc)
+  }
+}
+
+// Field inversion via Fermat's little theorem: a^(r-2) mod r
+fn fr_inv(a: Int) -> Int {
+  fr_pow(a, r - 2)
+}
+
+// ===== G1 point helpers =====
+
+// Negate a G1 point: -P = (r-1)*P  (since r*P = 0 in the group)
+fn g1_neg(p: G1Element) -> G1Element {
+  builtin.bls12_381_g1_scalar_mul(r - 1, p)
+}
+
+// Subtract G1 points: P - Q = P + (-Q)
+fn g1_sub(p: G1Element, q: G1Element) -> G1Element {
+  builtin.bls12_381_g1_add(p, g1_neg(q))
+}
+
+// ===== ByteArray / transcript helpers =====
+
+// Concatenate two byte arrays
+fn ba(a: ByteArray, b: ByteArray) -> ByteArray {
+  builtin.append_bytearray(a, b)
+}
+
+// Serialize an Fr scalar as 32 big-endian bytes (matches Fr.toRprBE in JS)
+fn fr_to_bytes(n: Int) -> ByteArray {
+  builtin.integer_to_bytearray(True, 32, n)
+}
+
+// Hash bytes with Keccak-256, interpret result as big-endian integer, reduce mod r
+fn keccak_challenge(data: ByteArray) -> Int {
+  builtin.bytearray_to_integer(True, builtin.keccak_256(data)) % r
+}
+
+// ===== List / public signal helpers =====
+
+fn signals_to_bytes(signals: List<Int>) -> ByteArray {
+  when signals is {
+    [] -> #""
+    [h, ..t] -> builtin.append_bytearray(fr_to_bytes(h), signals_to_bytes(t))
+  }
+}
+
+fn list_at_or_zero(lst: List<Int>, index: Int) -> Int {
+  when lst is {
+    [] -> 0
+    [head, ..tail] ->
+      if index == 0 {
+        head
+      } else {
+        list_at_or_zero(tail, index - 1)
+      }
+  }
+}
+<% if (test_proof) { %>
+
+// ===== Embedded Tests =====
+// Run with: aiken check
+
+test verify_valid_proof() {
+  let proof =
+    PlonkProof {
+      a: #"<%= test_proof.a %>",
+      b: #"<%= test_proof.b %>",
+      c: #"<%= test_proof.c %>",
+      z: #"<%= test_proof.z %>",
+      t1: #"<%= test_proof.t1 %>",
+      t2: #"<%= test_proof.t2 %>",
+      t3: #"<%= test_proof.t3 %>",
+      wxi: #"<%= test_proof.wxi %>",
+      wxiw: #"<%= test_proof.wxiw %>",
+      eval_a: <%= test_proof.eval_a %>,
+      eval_b: <%= test_proof.eval_b %>,
+      eval_c: <%= test_proof.eval_c %>,
+      eval_s1: <%= test_proof.eval_s1 %>,
+      eval_s2: <%= test_proof.eval_s2 %>,
+      eval_zw: <%= test_proof.eval_zw %>,
+    }
+  verify(proof, [<%= test_public_signals.join(", ") %>])
+}
+
+test verify_invalid_proof() fail {
+  let proof =
+    PlonkProof {
+      a: #"<%= test_proof.a %>",
+      b: #"<%= test_proof.b %>",
+      c: #"<%= test_proof.c %>",
+      z: #"<%= test_proof.z %>",
+      t1: #"<%= test_proof.t1 %>",
+      t2: #"<%= test_proof.t2 %>",
+      t3: #"<%= test_proof.t3 %>",
+      wxi: #"<%= test_proof.wxi %>",
+      wxiw: #"<%= test_proof.wxiw %>",
+      eval_a: <%= test_proof.eval_a %>,
+      eval_b: <%= test_proof.eval_b %>,
+      eval_c: <%= test_proof.eval_c %>,
+      eval_s1: <%= test_proof.eval_s1 %>,
+      eval_s2: <%= test_proof.eval_s2 %>,
+      eval_zw: <%= test_proof.eval_zw %>,
+    }
+  verify(proof, [999, <%= test_public_signals.slice(1).join(", ") %>])
+}
+<% } -%>
