@@ -23,3 +23,5 @@ export {default as fullProve} from "./plonk_fullprove.js";
 export {default as prove} from "./plonk_prove.js";
 export {default as verify} from "./plonk_verify.js";
 export {default as exportSolidityCallData} from "./plonk_exportsoliditycalldata.js";
+export {default as exportAikenVerifier} from "./plonk_exportaikenverifier.js";
+export {default as exportAikenCallData} from "./plonk_exportaikencalldata.js";

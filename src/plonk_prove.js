@@ -26,6 +26,7 @@ import { Scalar, utils, BigBuffer } from "ffjavascript";
 const {stringifyBigInts} = utils;
 import { Proof } from "./proof.js";
 import { Keccak256Transcript } from "./Keccak256Transcript.js";
+import { AikenKeccak256Transcript } from "./AikenKeccak256Transcript.js";
 import { MulZ } from "./mul_z.js";
 import {  ZKEY_PL_HEADER_SECTION,
     ZKEY_PL_ADDITIONS_SECTION,
@@ -102,7 +103,9 @@ export default async function plonk16Prove(zkeyFileName, witnessFileName, logger
 
     let challenges = {};
     let proof = new Proof(curve, logger);
-    const transcript = new Keccak256Transcript(curve);
+    const transcript = curve.name === "bls12381"
+        ? new AikenKeccak256Transcript(curve)
+        : new Keccak256Transcript(curve);
 
     if (logger) logger.debug(`> Reading Section ${ZKEY_PL_ADDITIONS_SECTION}. Additions`);
     await calculateAdditions();

@@ -266,6 +266,18 @@ const commands = [
         action: zkeyExportAikenCalldata
     },
     {
+        cmd: "zkey export aikenplonkverifier [circuit_final.zkey] [verifier.ak]",
+        description: "Creates a PLONK verifier in Aiken (Cardano) for BLS12-381",
+        alias: ["zkeapv"],
+        action: zkeyExportAikenPlonkVerifier
+    },
+    {
+        cmd: "zkey export aikenplonkcalldata [public.json] [proof.json]",
+        description: "Generates Aiken-compatible PLONK call data with compressed BLS12-381 points",
+        alias: ["zkeapc"],
+        action: zkeyExportAikenPlonkCalldata
+    },
+    {
         cmd: "groth16 setup [circuit.r1cs] [powersoftau.ptau] [circuit_0000.zkey]",
         description: "Creates an initial groth16 pkey file with zero contributions",
         alias: ["g16s", "zkn", "zkey new"],
@@ -758,6 +770,68 @@ async function zkeyExportAikenCalldata(params, options) {
     const proof = JSON.parse(fs.readFileSync(proofName, "utf8"));
 
     const res = await groth16.exportAikenCallData(proof, pub);
+    console.log(res);
+
+    return 0;
+}
+
+// zkey export aikenplonkverifier [circuit_final.zkey] [verifier.ak]
+async function zkeyExportAikenPlonkVerifier(params, options) {
+    let zkeyName;
+    let verifierName;
+
+    if (params.length < 1) {
+        zkeyName = "circuit_final.zkey";
+    } else {
+        zkeyName = params[0];
+    }
+
+    if (params.length < 2) {
+        verifierName = "verifier_plonk.ak";
+    } else {
+        verifierName = params[1];
+    }
+
+    if (options.verbose) Logger.setLogLevel("DEBUG");
+
+    const templates = {};
+
+    if (await fileExists(path.join(__dirname, "templates"))) {
+        templates.plonk = await fs.promises.readFile(path.join(__dirname, "templates", "verifier_plonk.ak.ejs"), "utf8");
+    } else {
+        templates.plonk = await fs.promises.readFile(path.join(__dirname, "..", "templates", "verifier_plonk.ak.ejs"), "utf8");
+    }
+
+    const verifierCode = await plonk.exportAikenVerifier(zkeyName, templates, logger);
+
+    fs.writeFileSync(verifierName, verifierCode, "utf-8");
+
+    return 0;
+}
+
+// zkey export aikenplonkcalldata [public.json] [proof.json]
+async function zkeyExportAikenPlonkCalldata(params, options) {
+    let publicName;
+    let proofName;
+
+    if (params.length < 1) {
+        publicName = "public.json";
+    } else {
+        publicName = params[0];
+    }
+
+    if (params.length < 2) {
+        proofName = "proof.json";
+    } else {
+        proofName = params[1];
+    }
+
+    if (options.verbose) Logger.setLogLevel("DEBUG");
+
+    const pub = JSON.parse(fs.readFileSync(publicName, "utf8"));
+    const proof = JSON.parse(fs.readFileSync(proofName, "utf8"));
+
+    const res = await plonk.exportAikenCallData(proof, pub);
     console.log(res);
 
     return 0;

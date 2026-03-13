@@ -22,6 +22,7 @@
 import * as curves from "./curves.js";
 import { utils }   from "ffjavascript";
 import { Keccak256Transcript } from "./Keccak256Transcript.js";
+import { AikenKeccak256Transcript } from "./AikenKeccak256Transcript.js";
 import { Scalar } from "ffjavascript";
 
 const { unstringifyBigInts } = utils;
@@ -208,7 +209,9 @@ function publicInputsAreValid(curve, publicInputs) {
 function calculatechallenges(curve, proof, publicSignals, vk) {
     const Fr = curve.Fr;
     const res = {};
-    const transcript = new Keccak256Transcript(curve);
+    const transcript = vk.curve === "bls12381"
+        ? new AikenKeccak256Transcript(curve)
+        : new Keccak256Transcript(curve);
 
     // Challenge round 2: beta and gamma
     transcript.addPolCommitment(vk.Qm);
